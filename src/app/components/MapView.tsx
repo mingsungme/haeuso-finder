@@ -55,6 +55,25 @@ const FAVORITE_PIN_SVG = `
         fill="#F7F4EB" stroke="#F7F4EB" stroke-width="0.6" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`;
 
+// Google Maps driving/walking directions are unavailable in South Korea
+// (regulatory restriction on exporting precision map data), so distance/time
+// here is estimated as a straight line rather than a routed path.
+function haversineDistanceMeters(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h =
+    sinLat * sinLat +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinLng * sinLng;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 function createPinContent(isFavorite: boolean, isSelected: boolean): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = isFavorite ? FAVORITE_PIN_SVG : DEFAULT_PIN_SVG;
@@ -153,10 +172,10 @@ export default function MapView({
     };
   }, [map, restrooms, selectedRestroom, favorites, onSelectRestroom]);
 
-  // Render directions polyline when origin + destination are set
+  // Estimate a straight-line "route" when origin + destination are set.
+  // (Google's Routes API returns no WALKING/DRIVING routes in South Korea.)
   useEffect(() => {
     if (!map) return;
-    let cancelled = false;
 
     const clearRenderer = () => {
       if (directionsRendererRef.current) {
@@ -173,118 +192,53 @@ export default function MapView({
       return;
     }
 
-    (async () => {
-      try {
-        // @ts-ignore - routes lib hosts Route.computeRoutes
-        const routesLib: any = await google.maps.importLibrary('routes');
-        // @ts-ignore - geometry lib for polyline decoding
-        const geometryLib: any = await google.maps.importLibrary('geometry');
-        // @ts-ignore - core lib for LatLng
-        const coreLib: any = await google.maps.importLibrary('core');
-        if (cancelled) return;
+    const origin = { lat: directionsOrigin.lat, lng: directionsOrigin.lng };
+    const dest = { lat: directionsDestination.lat, lng: directionsDestination.lng };
+    const distanceMeters = haversineDistanceMeters(origin, dest);
 
-        const Route = routesLib?.Route;
-        if (!Route?.computeRoutes) {
-          throw new Error('Route.computeRoutes not available');
-        }
+    clearRenderer();
+    // @ts-ignore
+    const polyline = new google.maps.Polyline({
+      map,
+      path: [origin, dest],
+      strokeColor: '#2C5E43',
+      strokeOpacity: 0,
+      strokeWeight: 4,
+      icons: [
+        {
+          icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+          offset: '0',
+          repeat: '12px',
+        },
+      ],
+    });
+    directionsRendererRef.current = polyline;
 
-        const originLatLng = new coreLib.LatLng(directionsOrigin.lat, directionsOrigin.lng);
-        const destLatLng = new coreLib.LatLng(directionsDestination.lat, directionsDestination.lng);
-        const travelMode =
-          routesLib?.RouteTravelMode?.WALKING ??
-          routesLib?.RouteTravelMode?.WALK ??
-          'WALKING';
+    // @ts-ignore
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(origin);
+    bounds.extend(dest);
+    map.fitBounds(bounds, 80);
 
-        const { routes } = await Route.computeRoutes({
-          origin: originLatLng,
-          destination: destLatLng,
-          travelMode,
-          fields: ['*'],
-        });
-        if (cancelled) return;
+    const distanceText =
+      distanceMeters >= 1000
+        ? `${(distanceMeters / 1000).toFixed(1)}km`
+        : `${Math.round(distanceMeters)}m`;
+    // ~75m/min average walking pace
+    const minutes = Math.max(1, Math.round(distanceMeters / 75));
+    const durationText =
+      minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분` : `${minutes}분`;
 
-        const route = routes?.[0];
-        if (!route) {
-          onDirectionsResult?.(null);
-          return;
-        }
-
-        const encoded =
-          route.polyline?.encodedPolyline ??
-          route.polyline?.encoded_polyline ??
-          route.encodedPolyline;
-        const path: any[] =
-          encoded && geometryLib?.encoding?.decodePath
-            ? geometryLib.encoding.decodePath(encoded)
-            : [
-                new coreLib.LatLng(directionsOrigin.lat, directionsOrigin.lng),
-                new coreLib.LatLng(directionsDestination.lat, directionsDestination.lng),
-              ];
-
-        clearRenderer();
-        // @ts-ignore
-        const polyline = new google.maps.Polyline({
-          map,
-          path,
-          strokeColor: '#2C5E43',
-          strokeOpacity: 0.9,
-          strokeWeight: 5,
-        });
-        directionsRendererRef.current = polyline;
-
-        // @ts-ignore
-        const bounds = new google.maps.LatLngBounds();
-        for (const point of path) bounds.extend(point);
-        map.fitBounds(bounds, 80);
-
-        const distanceMeters: number = route.distanceMeters ?? 0;
-        const durationMillis: number =
-          typeof route.durationMillis === 'number'
-            ? route.durationMillis
-            : typeof route.duration === 'string'
-              ? parseInt(route.duration, 10) * 1000
-              : 0;
-
-        const distanceText =
-          distanceMeters >= 1000
-            ? `${(distanceMeters / 1000).toFixed(1)}km`
-            : `${Math.round(distanceMeters)}m`;
-        const minutes = Math.max(1, Math.round(durationMillis / 60000));
-        const durationText =
-          minutes >= 60
-            ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분`
-            : `${minutes}분`;
-
-        const stepsRaw: any[] =
-          route.legs?.flatMap((leg: any) => leg.steps ?? []) ?? [];
-        const steps = stepsRaw.map((s: any) => {
-          const rawInstr: string =
-            s.navigationInstruction?.instructions ??
-            s.instructions ??
-            s.maneuver ??
-            '';
-          const instruction = rawInstr
-            .replace(/<[^>]+>/g, '')
-            .replace(/&nbsp;/g, ' ')
-            .trim();
-          const stepMeters: number = s.distanceMeters ?? 0;
-          const stepDistText =
-            stepMeters >= 1000
-              ? `${(stepMeters / 1000).toFixed(1)}km`
-              : `${Math.round(stepMeters)}m`;
-          return { instruction: instruction || '경로를 따라 이동', distanceText: stepDistText };
-        });
-
-        onDirectionsResult?.({ distanceText, durationText, steps });
-      } catch (err) {
-        console.error('Directions error:', err);
-        onDirectionsResult?.(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    onDirectionsResult?.({
+      distanceText,
+      durationText,
+      steps: [
+        {
+          instruction: `${directionsDestination.name} 방향으로 직선 이동 (실제 도보 경로 아님)`,
+          distanceText,
+        },
+      ],
+    });
   }, [map, directionsOrigin, directionsDestination, onDirectionsResult]);
 
   // Clean up all markers on unmount
