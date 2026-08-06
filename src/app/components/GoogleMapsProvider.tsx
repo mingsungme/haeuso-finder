@@ -1,8 +1,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { MapPin } from 'lucide-react';
 
-// Get API key from environment variable or use hardcoded key
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyBj04hWexiislQE4cUM-Po-0iAHcQO6apg';
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 interface GoogleMapsProviderProps {
   children: ReactNode;
