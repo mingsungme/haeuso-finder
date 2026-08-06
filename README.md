@@ -10,7 +10,11 @@ Google Maps API 실습 과제로 시작한 프로젝트로, [Figma Make](https:/
    ```bash
    npm i
    ```
-2. `.env` 파일을 만들고 Google Maps API 키를 설정합니다. 자세한 내용은 [SETUP.md](./SETUP.md) 참고.
+2. `.env` 파일을 만들고 Google Maps API 키를 설정합니다.
+   ```bash
+   cp .env.example .env
+   ```
+   그다음 `.env` 파일에 실제 Google Maps API 키를 입력합니다. 자세한 내용은 [SETUP.md](./SETUP.md) 참고.
 3. 개발 서버 실행
    ```bash
    npm run dev
