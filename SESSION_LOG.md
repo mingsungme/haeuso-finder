@@ -117,11 +117,52 @@ npm run dev
 - [ ] 데이터 전환 후 검색 로직 교체(반경 검색 → 거리순 상위 N개). 4번 문제가 함께 해결됨
 - [ ] TMap 보행자 경로 API 연동 → 직선거리 추정을 실제 경로로 교체
 - [ ] OKLCH 검증 결과 반영(중성 램프 통일 + primary 채도 조정)
-- [ ] 배포(Netlify): 환경변수 `VITE_GOOGLE_MAPS_API_KEY` 등록, **배포용 키는 개발용과 분리**해
-      HTTP 리퍼러를 배포 도메인으로 제한
+- [ ] 배포(Vercel) — 아래 "배포 메모" 참고
 - [ ] 포폴 덱 보강 — 유저 플로우/와이어프레임 등 과정 자료가 아직 없다
 
 **보류**
 
 - [ ] 머지 끝난 원격 브랜치 정리 (`unpack-project-source`, `fix/remove-hardcoded-maps-key`,
       `fix/directions-straight-line-fallback`, `docs/google-maps-env-setup`) — 일부러 남겨둠
+
+---
+
+## 배포 메모 (Vercel)
+
+포트폴리오 사이트가 이미 Vercel에 있고 도메인도 거기 붙어 있다.
+**이 앱은 별도 프로젝트로 만들고 서브도메인으로 붙이는 쪽이 간단하다** (`haeuso.내도메인.com`).
+DNS가 이미 Vercel에서 관리되므로 Domains에 서브도메인만 추가하면 되고 레코드를 직접 만질 필요가 없다.
+
+`내도메인.com/haeuso` 같은 하위 경로로 붙이려면 rewrites나 모노레포 구성이 필요하고,
+추가로 [vite.config.ts](vite.config.ts)에 `base: '/haeuso/'`를 넣어야 한다.
+안 넣으면 에셋 경로가 루트 기준이라 **흰 화면만 뜬다.**
+
+### 순서
+
+1. Vercel에서 이 저장소로 새 프로젝트 생성 (Vite는 자동 인식 — 빌드 설정 건드릴 것 없음)
+2. Settings → Environment Variables에 `VITE_GOOGLE_MAPS_API_KEY` 추가
+   (Production / Preview / Development 모두 체크)
+3. **반드시 Redeploy.** `VITE_` 변수는 빌드 시점에 코드로 구워지므로, 변수만 추가하고
+   재배포하지 않으면 기존 빌드에는 키가 없어 그대로 실패한다.
+4. Domains에 서브도메인 연결
+5. GCP 콘솔에서 키의 HTTP 리퍼러 제한에 배포 주소 추가 (아래)
+
+### 리퍼러 제한
+
+```
+https://내도메인.com/*
+https://www.내도메인.com/*
+https://*.vercel.app/*
+http://localhost:*/*
+```
+
+- apex와 `www` 둘 다 넣어야 한다. 하나만 넣으면 다른 쪽 접속에서 깨진다.
+- **`*.vercel.app`을 빠뜨리지 말 것.** Vercel은 브랜치마다 임시 프리뷰 URL을 만들기 때문에,
+  없으면 프리뷰에서만 `RefererNotAllowedMapError`가 나서 원인을 찾기 어렵다.
+
+### 알아둘 점
+
+- `VITE_` 변수는 **클라이언트 번들에 그대로 들어간다.** 배포된 사이트의 JS를 열면 키가 보이는 게 정상이며,
+  Google Maps 브라우저 키의 구조상 숨길 수 없다. **실제 보호 수단은 위의 리퍼러 제한이다.**
+- 가능하면 배포용 키를 개발용과 분리해서 발급할 것. 한쪽이 문제가 생겨도 다른 쪽이 영향받지 않는다.
+- 이 앱은 화면 전환이 URL이 아니라 상태(`useState`)로 되어 있어 **SPA rewrite 설정은 필요 없다.**
