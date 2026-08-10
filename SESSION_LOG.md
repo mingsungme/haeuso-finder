@@ -129,11 +129,17 @@ npm run dev
 
 ## 배포 메모 (Vercel)
 
-포트폴리오 사이트가 이미 Vercel에 있고 도메인도 거기 붙어 있다.
-**이 앱은 별도 프로젝트로 만들고 서브도메인으로 붙이는 쪽이 간단하다** (`haeuso.내도메인.com`).
-DNS가 이미 Vercel에서 관리되므로 Domains에 서브도메인만 추가하면 되고 레코드를 직접 만질 필요가 없다.
+### 현재 구성 (2026-08-10 확인)
 
-`내도메인.com/haeuso` 같은 하위 경로로 붙이려면 rewrites나 모노레포 구성이 필요하고,
+- 포트폴리오 도메인: **https://portfoliomsk.shop** (apex, www 모두 `76.76.21.21` = Vercel).
+  응답 헤더 `Server: Vercel`, `http://`는 308로 `https://`에 리다이렉트된다.
+- **네임서버는 `ns1.cafe24.com` — DNS는 Vercel이 아니라 카페24에서 관리한다.**
+  따라서 서브도메인을 추가하려면 Vercel에서 클릭만으로 끝나지 않고
+  **카페24 DNS 관리 화면에서 레코드를 직접 추가해야 한다.**
+
+**이 앱은 별도 Vercel 프로젝트로 만들고 서브도메인으로 붙인다** (`haeuso.portfoliomsk.shop`).
+
+`portfoliomsk.shop/haeuso` 같은 하위 경로로 붙이려면 rewrites나 모노레포 구성이 필요하고,
 추가로 [vite.config.ts](vite.config.ts)에 `base: '/haeuso/'`를 넣어야 한다.
 안 넣으면 에셋 경로가 루트 기준이라 **흰 화면만 뜬다.**
 
@@ -144,19 +150,25 @@ DNS가 이미 Vercel에서 관리되므로 Domains에 서브도메인만 추가�
    (Production / Preview / Development 모두 체크)
 3. **반드시 Redeploy.** `VITE_` 변수는 빌드 시점에 코드로 구워지므로, 변수만 추가하고
    재배포하지 않으면 기존 빌드에는 키가 없어 그대로 실패한다.
-4. Domains에 서브도메인 연결
-5. GCP 콘솔에서 키의 HTTP 리퍼러 제한에 배포 주소 추가 (아래)
+4. Vercel 프로젝트 → Settings → Domains에 `haeuso.portfoliomsk.shop` 추가.
+   Vercel이 필요한 DNS 레코드(보통 CNAME → `cname.vercel-dns.com`)를 알려준다.
+5. **카페24 DNS 관리에서** 그 레코드를 추가한다 (호스트 `haeuso`).
+   전파되면 Vercel이 인증서를 자동 발급한다.
+6. GCP 콘솔에서 키의 HTTP 리퍼러 제한에 배포 주소 추가 (아래)
 
 ### 리퍼러 제한
 
 ```
-https://내도메인.com/*
-https://www.내도메인.com/*
+https://portfoliomsk.shop/*
+https://www.portfoliomsk.shop/*
+https://haeuso.portfoliomsk.shop/*
 https://*.vercel.app/*
 http://localhost:*/*
 ```
 
 - apex와 `www` 둘 다 넣어야 한다. 하나만 넣으면 다른 쪽 접속에서 깨진다.
+- 앱을 서브도메인에만 올릴 계획이어도, 포폴 본체에서 지도를 임베드할 가능성을 생각해
+  apex/www를 함께 넣어두는 편이 안전하다.
 - **`*.vercel.app`을 빠뜨리지 말 것.** Vercel은 브랜치마다 임시 프리뷰 URL을 만들기 때문에,
   없으면 프리뷰에서만 `RefererNotAllowedMapError`가 나서 원인을 찾기 어렵다.
 
