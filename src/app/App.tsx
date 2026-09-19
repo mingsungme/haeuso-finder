@@ -111,11 +111,6 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [directionsTarget, setDirectionsTarget] = useState<Restroom | null>(null);
-  const [directionsInfo, setDirectionsInfo] = useState<{
-    distanceText: string;
-    durationText: string;
-    steps: { instruction: string; distanceText: string }[];
-  } | null>(null);
 
   const handleGetDirections = useCallback((restroom: Restroom) => {
     setDirectionsTarget(restroom);
@@ -125,7 +120,6 @@ export default function App() {
 
   const clearDirections = useCallback(() => {
     setDirectionsTarget(null);
-    setDirectionsInfo(null);
   }, []);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCenterRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -558,8 +552,6 @@ export default function App() {
           <DirectionsScreen
             origin={userLocation}
             destination={directionsTarget}
-            info={directionsInfo}
-            onResult={setDirectionsInfo}
             onClose={clearDirections}
           />
         )}
