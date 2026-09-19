@@ -11,3 +11,9 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+# 덱 산출물 PDF — 깃에 두지 않는다 (HTML 이 원본, 완성본은 Docs 보관)
+portfolio/**/*.pdf
+
+# 작업 흔적
+**/_workspace/

@@ -12,6 +12,7 @@
   --color-success: #2C5E43;
   --color-warning: #DCA144;
   --color-error: #D04A3C;
+  --color-disabled: #B8B9B3;       /* 이용 불가. 기와 회색 45% on 달빛 미색 */
 
   /* Neutrals */
   --color-bg-default: #F7F4EB;

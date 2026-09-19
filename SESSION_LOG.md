@@ -146,8 +146,17 @@ npm run dev
 ### 순서
 
 1. Vercel에서 이 저장소로 새 프로젝트 생성 (Vite는 자동 인식 — 빌드 설정 건드릴 것 없음)
-2. Settings → Environment Variables에 `VITE_GOOGLE_MAPS_API_KEY` 추가
+2. Settings → Environment Variables에 아래 값을 추가
    (Production / Preview / Development 모두 체크)
+
+   | 변수 | 비고 |
+   |---|---|
+   | `VITE_GOOGLE_MAPS_API_KEY` | 빌드 시점에 번들로 구워진다 |
+   | `VITE_GOOGLE_MAPS_MAP_ID` | 지도 색상용. 콘솔에서 만든 Map ID |
+   | `TMAP_APP_KEY` | **`VITE_` 접두사 없음.** `/api/route` 함수가 런타임에 읽는다 |
+
+   `TMAP_APP_KEY`만 성격이 다르다. 나머지 둘은 빌드 결과물에 박히지만 이건 서버에만 남으므로,
+   값을 바꿔도 재배포 없이 함수 재시작만으로 반영된다.
 3. **반드시 Redeploy.** `VITE_` 변수는 빌드 시점에 코드로 구워지므로, 변수만 추가하고
    재배포하지 않으면 기존 빌드에는 키가 없어 그대로 실패한다.
 4. Vercel 프로젝트 → Settings → Domains에 `haeuso.portfoliomsk.shop` 추가.

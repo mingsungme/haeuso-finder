@@ -1,5 +1,6 @@
 import { GoogleMap, InfoWindow } from '@react-google-maps/api';
 import { useState, useCallback, useEffect, useRef } from 'react';
+import type { LatLng } from '../lib/directions';
 
 export interface Restroom {
   id: string;
@@ -20,13 +21,12 @@ interface MapViewProps {
   favorites: Set<string>;
   onSelectRestroom: (restroom: Restroom | null) => void;
   onIdle?: (center: { lat: number; lng: number }) => void;
-  directionsOrigin?: { lat: number; lng: number } | null;
-  directionsDestination?: Restroom | null;
-  onDirectionsResult?: (info: {
-    distanceText: string;
-    durationText: string;
-    steps: { instruction: string; distanceText: string }[];
-  } | null) => void;
+  /** 길안내 출발지. 있으면 출발 마커를 찍고 경로에 맞춰 화면을 맞춘다. */
+  directionsOrigin?: LatLng | null;
+  /** 그릴 경로 좌표열. TMAP 응답이면 실제 보행로, 직선 추정이면 두 점. */
+  routePath?: LatLng[] | null;
+  /** 직선 추정 경로인지. 점선으로 그려 실제 경로와 구분한다. */
+  routeIsEstimate?: boolean;
 }
 
 const mapContainerStyle = {
@@ -34,9 +34,10 @@ const mapContainerStyle = {
   height: '100%',
 };
 
-// A mapId is required to render AdvancedMarkerElement.
-// DEMO_MAP_ID is provided by Google for development/testing.
-const MAP_ID = 'DEMO_MAP_ID';
+// AdvancedMarkerElement를 쓰려면 mapId가 반드시 필요하다.
+// 콘솔에서 발급한 Map ID를 .env에 넣으면 그 지도 스타일(색상)이 적용되고,
+// 없으면 구글이 제공하는 개발용 DEMO_MAP_ID(기본 스타일)로 뜬다.
+const MAP_ID = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID';
 
 // 대나무 숲 초록 핀 - 디폴트 (미니멀, 둥근 마감)
 const DEFAULT_PIN_SVG = `
@@ -55,24 +56,12 @@ const FAVORITE_PIN_SVG = `
         fill="#F7F4EB" stroke="#F7F4EB" stroke-width="0.6" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`;
 
-// Google Maps driving/walking directions are unavailable in South Korea
-// (regulatory restriction on exporting precision map data), so distance/time
-// here is estimated as a straight line rather than a routed path.
-function haversineDistanceMeters(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number }
-): number {
-  const R = 6371000;
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const sinLat = Math.sin(dLat / 2);
-  const sinLng = Math.sin(dLng / 2);
-  const h =
-    sinLat * sinLat +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinLng * sinLng;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
+// 출발지(현재 위치) 표시용 점
+const ORIGIN_DOT_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22" fill="none">
+  <circle cx="11" cy="11" r="9" fill="#2C5E43" fill-opacity="0.18"/>
+  <circle cx="11" cy="11" r="5" fill="#2C5E43" stroke="#F7F4EB" stroke-width="2"/>
+</svg>`;
 
 function createPinContent(isFavorite: boolean, isSelected: boolean): HTMLElement {
   const wrapper = document.createElement('div');
@@ -88,6 +77,13 @@ function createPinContent(isFavorite: boolean, isSelected: boolean): HTMLElement
   return wrapper;
 }
 
+function createOriginContent(): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = ORIGIN_DOT_SVG;
+  wrapper.style.lineHeight = '0';
+  return wrapper;
+}
+
 export default function MapView({
   restrooms,
   center,
@@ -96,12 +92,13 @@ export default function MapView({
   onSelectRestroom,
   onIdle,
   directionsOrigin,
-  directionsDestination,
-  onDirectionsResult,
+  routePath,
+  routeIsEstimate,
 }: MapViewProps) {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const markersRef = useRef<Map<string, any>>(new Map());
-  const directionsRendererRef = useRef<any>(null);
+  const routeLineRef = useRef<any>(null);
+  const originMarkerRef = useRef<any>(null);
 
   const onLoad = useCallback((m: google.maps.Map) => {
     setMap(m);
@@ -172,74 +169,88 @@ export default function MapView({
     };
   }, [map, restrooms, selectedRestroom, favorites, onSelectRestroom]);
 
-  // Estimate a straight-line "route" when origin + destination are set.
-  // (Google's Routes API returns no WALKING/DRIVING routes in South Korea.)
+  // 출발지 마커. 길안내 화면에서만 보인다.
   useEffect(() => {
     if (!map) return;
+    let cancelled = false;
 
-    const clearRenderer = () => {
-      if (directionsRendererRef.current) {
-        if (typeof directionsRendererRef.current.setMap === 'function') {
-          directionsRendererRef.current.setMap(null);
-        }
-        directionsRendererRef.current = null;
+    const clear = () => {
+      if (originMarkerRef.current) {
+        originMarkerRef.current.map = null;
+        originMarkerRef.current = null;
       }
     };
 
-    if (!directionsOrigin || !directionsDestination) {
-      clearRenderer();
-      onDirectionsResult?.(null);
+    if (!directionsOrigin) {
+      clear();
       return;
     }
 
-    const origin = { lat: directionsOrigin.lat, lng: directionsOrigin.lng };
-    const dest = { lat: directionsDestination.lat, lng: directionsDestination.lng };
-    const distanceMeters = haversineDistanceMeters(origin, dest);
+    (async () => {
+      // @ts-ignore
+      const markerLib: any = await google.maps.importLibrary('marker');
+      if (cancelled) return;
+      const AdvancedMarkerElement = markerLib?.AdvancedMarkerElement;
+      if (!AdvancedMarkerElement) return;
 
-    clearRenderer();
+      if (!originMarkerRef.current) {
+        originMarkerRef.current = new AdvancedMarkerElement({
+          map,
+          position: directionsOrigin,
+          content: createOriginContent(),
+        });
+      } else {
+        originMarkerRef.current.position = directionsOrigin;
+        originMarkerRef.current.map = map;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [map, directionsOrigin]);
+
+  // 경로 폴리라인. 좌표열은 부모(DirectionsScreen)가 TMAP에서 받아 내려준다.
+  useEffect(() => {
+    if (!map) return;
+
+    const clearLine = () => {
+      if (routeLineRef.current) {
+        routeLineRef.current.setMap(null);
+        routeLineRef.current = null;
+      }
+    };
+
+    clearLine();
+    if (!routePath || routePath.length < 2) return;
+
+    // 실제 보행로는 실선, 직선 추정은 점선으로 그려 한눈에 구분되게 한다.
     // @ts-ignore
-    const polyline = new google.maps.Polyline({
+    const line = new google.maps.Polyline({
       map,
-      path: [origin, dest],
+      path: routePath,
       strokeColor: '#2C5E43',
-      strokeOpacity: 0,
-      strokeWeight: 4,
-      icons: [
-        {
-          icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-          offset: '0',
-          repeat: '12px',
-        },
-      ],
+      strokeOpacity: routeIsEstimate ? 0 : 0.9,
+      strokeWeight: 5,
+      icons: routeIsEstimate
+        ? [
+            {
+              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+              offset: '0',
+              repeat: '12px',
+            },
+          ]
+        : undefined,
     });
-    directionsRendererRef.current = polyline;
+    routeLineRef.current = line;
 
     // @ts-ignore
     const bounds = new google.maps.LatLngBounds();
-    bounds.extend(origin);
-    bounds.extend(dest);
+    for (const point of routePath) bounds.extend(point);
     map.fitBounds(bounds, 80);
 
-    const distanceText =
-      distanceMeters >= 1000
-        ? `${(distanceMeters / 1000).toFixed(1)}km`
-        : `${Math.round(distanceMeters)}m`;
-    // ~75m/min average walking pace
-    const minutes = Math.max(1, Math.round(distanceMeters / 75));
-    const durationText =
-      minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분` : `${minutes}분`;
-
-    onDirectionsResult?.({
-      distanceText,
-      durationText,
-      steps: [
-        {
-          instruction: `${directionsDestination.name} 방향으로 직선 이동 (실제 도보 경로 아님)`,
-          distanceText,
-        },
-      ],
-    });
-  }, [map, directionsOrigin, directionsDestination, onDirectionsResult]);
+    return clearLine;
+  }, [map, routePath, routeIsEstimate]);
 
   // Clean up all markers on unmount
   useEffect(() => {
@@ -248,11 +259,13 @@ export default function MapView({
         marker.map = null;
       }
       markersRef.current.clear();
-      if (directionsRendererRef.current) {
-        if (typeof directionsRendererRef.current.setMap === 'function') {
-          directionsRendererRef.current.setMap(null);
-        }
-        directionsRendererRef.current = null;
+      if (originMarkerRef.current) {
+        originMarkerRef.current.map = null;
+        originMarkerRef.current = null;
+      }
+      if (routeLineRef.current) {
+        routeLineRef.current.setMap(null);
+        routeLineRef.current = null;
       }
     };
   }, []);
